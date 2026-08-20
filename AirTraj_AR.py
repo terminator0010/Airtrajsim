@@ -39,6 +39,9 @@ class AirTrajAR:
         self.dt = dt
         self.cam_height_offset = cam_height_offset
         self.cam_depth_offset = cam_depth_offset
+        
+        self.smoothed_distance = None
+        self.alpha = 0.15        
 
         fov_horizontal_deg = 20.0
         fx = frame_width / (2.0 * math.tan(math.radians(fov_horizontal_deg / 2.0)))
