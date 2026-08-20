@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 import math
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 import AirTrajSimPy_main as At
 
 class AirTrajAR:
@@ -25,7 +28,6 @@ class AirTrajAR:
         self.v0 = v0
         self.elevation_deg = elevation_deg
         
-        # Puxando variaveis globais diretamente do main original, se desejado
         self.mass_g = At.m_g if hasattr(At, 'm_g') else mass_g
         self.mass_kg = self.mass_g / 1000.0
         self.hop_up = At.hop_percent if hasattr(At, 'hop_percent') else hop_up
@@ -38,7 +40,6 @@ class AirTrajAR:
         self.cam_height_offset = cam_height_offset
         self.cam_depth_offset = cam_depth_offset
 
-        # Matriz Intrínseca Genérica
         fov_horizontal_deg = 20.0
         fx = frame_width / (2.0 * math.tan(math.radians(fov_horizontal_deg / 2.0)))
         fy = fx
@@ -65,8 +66,16 @@ class AirTrajAR:
         self._project_trajectory()
         self._compute_distance_markers()
 
+        # --- NOVA INICIALIZAÇÃO DO MEDIAPIPE (TASKS API) ---
+        # Certifique-se de que o arquivo .tflite está na mesma pasta do script
+        base_options = python.BaseOptions(model_asset_path='face_detector.task')
+        options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=0.5)
+        self.face_detector = vision.FaceDetector.create_from_options(options)
+        
+        # Altura média do rosto humano em metros (23cm)
+        self.REAL_FACE_HEIGHT_M = 0.23 
+
     def _compute_trajectory_3d(self) -> np.ndarray:
-        # Chamada direta para o motor físico modularizado no arquivo principal
         traj_main = At.calcular_fisica_3d(
             v0=self.v0,
             elevation_deg=self.elevation_deg,
@@ -78,8 +87,6 @@ class AirTrajAR:
             dt=self.dt
         )
         
-        # Conversão das coordenadas do Main para o OpenCV
-        # OpenCV: X=direita, Y=baixo, Z=frente
         opencv_x = traj_main[:, 2]              
         opencv_y = -(traj_main[:, 1] - self.h0) 
         opencv_z = traj_main[:, 0]              
@@ -130,6 +137,41 @@ class AirTrajAR:
             self.trajectory_3d = self._compute_trajectory_3d()
             self._project_trajectory()
             self._compute_distance_markers()
+
+    # --- NOVO MÉTODO DE DETECÇÃO COM A TASKS API ---
+    def detect_and_draw_faces(self, frame: np.ndarray) -> np.ndarray:
+        # Converter a imagem do OpenCV (BGR) para o formato do MediaPipe (RGB)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        
+        # Fazer a detecção
+        detection_result = self.face_detector.detect(mp_image)
+
+        if detection_result.detections:
+            for detection in detection_result.detections:
+                # Na nova API, a Bounding Box já vem em pixels absolutos
+                bbox = detection.bounding_box
+                xmin = bbox.origin_x
+                ymin = bbox.origin_y
+                box_w = bbox.width
+                box_h = bbox.height
+
+                if box_h > 0:
+                    fy = self.K[1, 1] 
+                    
+                    # Cálculo da distância (Modelo Pinhole)
+                    distance_m = (self.REAL_FACE_HEIGHT_M * fy) / box_h
+
+                    color = (255, 0, 255) 
+                    cv2.rectangle(frame, (xmin, ymin), (xmin + box_w, ymin + box_h), color, 2)
+                    
+                    text = f"Alvo: {distance_m:.1f}m"
+                    cv2.putText(frame, text, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                    
+                    cx, cy = xmin + box_w // 2, ymin + box_h // 2
+                    cv2.circle(frame, (cx, cy), 3, color, -1)
+
+        return frame
 
     def render_overlay(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
@@ -240,7 +282,9 @@ class AirTrajAR:
             ret, frame = cap.read()
             if not ret: continue
             
+            frame = self.detect_and_draw_faces(frame)
             frame = self.render_overlay(frame)
+            
             cv2.imshow(window_name, frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -256,6 +300,8 @@ class AirTrajAR:
 
         cap.release()
         cv2.destroyAllWindows()
+        # Fecha a instância do detector de rostos corretamente
+        self.face_detector.close()
 
 if __name__ == "__main__":
     ar = AirTrajAR(
