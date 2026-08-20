@@ -3,7 +3,81 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import math
 
+# --- Munição e Ajuste ---
 tipoCilindro = 72.0
+hop_percent = 0.4
+m_g = 0.20    
+h0 = 1.5 
+
+
+# Adicione isso no AirTrajSimPy_main.py (fora da função main)
+def calcular_fisica_3d(v0, elevation_deg, mass_kg, hop_percent, temp_c, wind_lateral_ms, h0, dt=0.001):
+    import numpy as np
+    import math
+    
+    rho = 101325 / (287.05 * (temp_c + 273.15))
+    r_bb = (5.95 / 1000) / 2
+    A = np.pi * r_bb**2
+    
+    # Vento
+    Wz = wind_lateral_ms
+    Wx = 0.0
+    Wy = 0.0
+
+    # Rotação
+    rpm_max = 90000.0  
+    omega_0 = (rpm_max * hop_percent) * (2 * np.pi / 60)
+    
+    Cd_base = 0.50 
+    fator_eficiencia_magnus = 0.18
+
+    elev_rad = math.radians(elevation_deg)
+    vx_init = v0 * math.cos(elev_rad)
+    vy_init = v0 * math.sin(elev_rad)
+
+    state = np.array([0.0, h0, 0.0, vx_init, vy_init, 0.0, omega_0]) 
+    
+    def derivatives(t, s):
+        x, y, z, vx, vy, vz, w = s
+        
+        v_rel_x = vx - Wx
+        v_rel_y = vy - Wy
+        v_rel_z = vz - Wz
+        v_rel = np.sqrt(v_rel_x**2 + v_rel_y**2 + v_rel_z**2)
+        if v_rel < 0.1: v_rel = 0.1
+            
+        spin_param = (r_bb * w) / v_rel
+        Cl = min(0.25, fator_eficiencia_magnus * spin_param)
+        
+        Fd = 0.5 * rho * A * Cd_base * v_rel**2
+        Fl = 0.5 * rho * A * Cl * v_rel**2
+        
+        ax_drag = -(Fd/mass_kg) * (v_rel_x / v_rel)
+        ay_drag = -(Fd/mass_kg) * (v_rel_y / v_rel)
+        az_drag = -(Fd/mass_kg) * (v_rel_z / v_rel)
+        
+        ay_lift = (Fl/mass_kg) 
+        ay_grav = -9.81
+        decay = -0.30 * w 
+        
+        return np.array([vx, vy, vz, ax_drag, ay_grav + ay_drag + ay_lift, az_drag, decay])
+
+    trajectory = [state.copy()]
+    t = 0.0
+    while True:
+        k1 = derivatives(t, state)
+        k2 = derivatives(t + 0.5*dt, state + 0.5*dt*k1)
+        k3 = derivatives(t + 0.5*dt, state + 0.5*dt*k2)
+        k4 = derivatives(t + dt, state + dt*k3)
+        state = state + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
+        t += dt
+        if state[1] < 0 or state[0] > 100:
+            trajectory.append(state.copy())
+            break
+        trajectory.append(state.copy())
+        
+    return np.array(trajectory)
+
 
 def main():
     # ==============================================================================
@@ -31,12 +105,7 @@ def main():
     # Hardware Restante
     cano_len_mm = 501 
     cano_diam_mm = 6.10   
-    mola_escolhida = M110 
-
-    # Munição e Ajuste
-    m_g = 0.20
-    hop_percent = 0.4    
-    h0 = 1.5              
+    mola_escolhida = M110              
     
     # Ambiente (Vento Lateral 5km/h)
     temp_c = 25.0
@@ -301,20 +370,20 @@ def main():
     
     # 3. TRASEIRA
     ax3 = fig.add_subplot(gs[2])
-    ax3.plot(traj[:,2], traj[:,1], color='#8e44ad', linewidth=2.5)
+    ax3.plot(-1*traj[:,2], traj[:,1], color='#8e44ad', linewidth=2.5)
     ax3.scatter([0], [h0], color='black', marker='+', s=100, label='Mira')
     
     for d in range(10, int(dist_total), 10):
         idx = (np.abs(traj[:,0] - d)).argmin()
-        ax3.scatter(traj[idx, 2], traj[idx, 1], color='black', s=20)
-        ax3.text(traj[idx, 2], traj[idx, 1]+0.1, f'{d}m', fontsize=8, ha='center')
+        ax3.scatter(-1*traj[idx, 2], traj[idx, 1], color='black', s=20)
+        ax3.text(-1*traj[idx, 2], traj[idx, 1]+0.1, f'{d}m', fontsize=8, ha='center')
 
     ax3.set_title("3. Visão de Trás (Shooter's View)", fontweight='bold')
     ax3.set_ylabel("Altura (m) [Y]")
     ax3.set_xlabel("Desvio Lateral (m) [Z]")
     ax3.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
     ax3.grid(True, alpha=0.4)
-    ax3.set_ylim(0, max(2.5, np.max(traj[:,1]) + 0.5))
+    ax3.set_ylim(0, max(2.5, np.max(-1*traj[:,1]) + 0.5))
     ax3.set_xlim(-limit_z, limit_z)
 
     plt.tight_layout()
