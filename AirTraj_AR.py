@@ -11,10 +11,10 @@ class AirTrajAR:
         self,
         frame_width: int = 640,
         frame_height: int = 480,
-        v0: float = 150.0,
+        v0: float = 110.0,
         elevation_deg: float = 0,
         mass_g: float = 0.25,
-        hop_up: float = 0.50,
+        hop_up: float = 0.35,
         gravity: float = 9.81,
         wind_lateral_ms: float = 0.0,
         temp_c: float = 25.0,
@@ -208,17 +208,17 @@ class AirTrajAR:
             if 0 <= first_pt[0] < w and 0 <= first_pt[1] < h:
                 cv2.circle(frame, first_pt, 5, (0, 255, 0), -1, cv2.LINE_AA)
 
-        for pt_2d, label in self.distance_markers:
+        for pt_2d, label in reversed(self.distance_markers):
             px, py = int(pt_2d[0]), int(pt_2d[1])
             if 0 <= px < w and 0 <= py < h:
                 cv2.line(frame, (px, py - 6), (px, py + 6), (255, 255, 255), 1, cv2.LINE_AA)
                 (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-                cv2.rectangle(frame, (px - 2, py - th - 12), (px + tw + 2, py - 8), (0, 0, 0), -1)
+                cv2.rectangle(frame, (px - 2, py - th - 12), (px + tw + 2, py - 8), (0, 0, 255), 1)
                 cv2.putText(frame, label, (px, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
         cx, cy = w // 2, h // 2
-        cross_size = 15
-        cross_gap = 4
+        cross_size = 5
+        cross_gap = 3
         cross_color = (0, 255, 0)
         cv2.line(frame, (cx - cross_size, cy), (cx - cross_gap, cy), cross_color, 1, cv2.LINE_AA)
         cv2.line(frame, (cx + cross_gap, cy), (cx + cross_size, cy), cross_color, 1, cv2.LINE_AA)
@@ -311,8 +311,8 @@ if __name__ == "__main__":
         frame_width=640,
         frame_height=480,
         v0=110.0,              
-        elevation_deg=1.5,     
-        mass_g=0.20,           
+        elevation_deg=0.0,     
+        mass_g=0.25,           
         hop_up=0.35,           
         gravity=9.81,
         wind_lateral_ms=0.0,   
