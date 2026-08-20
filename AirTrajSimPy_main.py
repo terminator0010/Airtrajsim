@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import math
 
-tipoCilindro = None
+tipoCilindro = 72.0
 
 def main():
     # ==============================================================================
@@ -29,8 +29,8 @@ def main():
     cilindro_escolhido = tipoCilindro 
     
     # Hardware Restante
-    cano_len_mm = 363 
-    cano_diam_mm = 6.03   
+    cano_len_mm = 501 
+    cano_diam_mm = 6.10   
     mola_escolhida = M110 
 
     # Munição e Ajuste
