@@ -109,7 +109,7 @@ def main():
     
     # Ambiente (Vento Lateral 5km/h)
     temp_c = 25.0
-    vento_velocidade_kmh = 5.0  
+    vento_velocidade_kmh = 0  
     vento_angulo_graus = 90.0   # 90 graus (Esquerda -> Direita)
 
     # ==============================================================================

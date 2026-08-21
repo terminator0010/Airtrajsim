@@ -13,8 +13,8 @@ class AirTrajAR:
         frame_height: int = 480,
         v0: float = 110.0,
         elevation_deg: float = 0,
-        mass_g: float = 0.25,
-        hop_up: float = 0.35,
+        mass_g: float = 0.20,
+        hop_up: float = 0.4,
         gravity: float = 9.81,
         wind_lateral_ms: float = 0.0,
         temp_c: float = 25.0,
@@ -69,13 +69,11 @@ class AirTrajAR:
         self._project_trajectory()
         self._compute_distance_markers()
 
-        # --- NOVA INICIALIZAÇÃO DO MEDIAPIPE (TASKS API) ---
-        # Certifique-se de que o arquivo .tflite está na mesma pasta do script
+        # --- INICIALIZAÇÃO DO MEDIAPIPE (TASKS API) ---
         base_options = python.BaseOptions(model_asset_path='face_detector.task')
         options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=0.5)
         self.face_detector = vision.FaceDetector.create_from_options(options)
         
-        # Altura média do rosto humano em metros (23cm)
         self.REAL_FACE_HEIGHT_M = 0.23 
 
     def _compute_trajectory_3d(self) -> np.ndarray:
@@ -141,91 +139,140 @@ class AirTrajAR:
             self._project_trajectory()
             self._compute_distance_markers()
 
-    # --- NOVO MÉTODO DE DETECÇÃO COM A TASKS API ---
     def detect_and_draw_faces(self, frame: np.ndarray) -> np.ndarray:
-        # Converter a imagem do OpenCV (BGR) para o formato do MediaPipe (RGB)
+        h, w = frame.shape[:2]
+        
+        # Calcular a posição do retículo com base na elevação
+        fy = self.K[1, 1]
+        offset_y = fy * math.tan(math.radians(self.elevation_deg))
+        reticle_x = w // 2
+        reticle_y = int(h / 2 - offset_y)
+        
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
         
-        # Fazer a detecção
         detection_result = self.face_detector.detect(mp_image)
+
+        target_detection = None
+        min_dist_to_center = float('inf')
 
         if detection_result.detections:
             for detection in detection_result.detections:
-                # Na nova API, a Bounding Box já vem em pixels absolutos
                 bbox = detection.bounding_box
+                xmin = bbox.origin_x
+                ymin = bbox.origin_y
+                box_w = bbox.width
+                box_h = bbox.height
+                
+                if xmin <= reticle_x <= (xmin + box_w) and ymin <= reticle_y <= (ymin + box_h):
+                    face_cx = xmin + box_w / 2
+                    face_cy = ymin + box_h / 2
+                    dist = math.hypot(face_cx - reticle_x, face_cy - reticle_y)
+                    
+                    if dist < min_dist_to_center:
+                        min_dist_to_center = dist
+                        target_detection = detection
+
+            if target_detection:
+                bbox = target_detection.bounding_box
                 xmin = bbox.origin_x
                 ymin = bbox.origin_y
                 box_w = bbox.width
                 box_h = bbox.height
 
                 if box_h > 0:
-                    fy = self.K[1, 1] 
-                    
-                    # Cálculo da distância (Modelo Pinhole)
                     distance_m = (self.REAL_FACE_HEIGHT_M * fy) / box_h
 
-                    color = (255, 0, 255) 
+                    color = (0, 255, 0)
                     cv2.rectangle(frame, (xmin, ymin), (xmin + box_w, ymin + box_h), color, 2)
                     
                     text = f"Alvo: {distance_m:.1f}m"
-                    cv2.putText(frame, text, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                    cv2.putText(frame, text, (xmin, ymin - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
                     
-                    cx, cy = xmin + box_w // 2, ymin + box_h // 2
-                    cv2.circle(frame, (cx, cy), 3, color, -1)
+                    cx_face, cy_face = int(xmin + box_w // 2), int(ymin + box_h // 2)
+                    cv2.circle(frame, (cx_face, cy_face), 3, color, -1)
 
         return frame
 
+# --- NOVO SISTEMA DE RENDERIZAÇÃO DA MIRA ---
+    # --- NOVO SISTEMA DE RENDERIZAÇÃO DA MIRA ---
     def render_overlay(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
+        
+        # Ajustando o centro (cy) com base na elevação em graus
+        fy = self.K[1, 1]
+        offset_y = fy * math.tan(math.radians(self.elevation_deg))
+        
+        cx = w // 2
+        cy = int(h / 2 - offset_y) 
+        
+        cross_color_base = (0, 255, 0) # Verde tático para a linha base
+        zero_color = (0, 0, 255)       # Vermelho para o 0m (Centro)
 
-        if self.trajectory_2d is not None and len(self.trajectory_2d) > 1:
-            n_pts = len(self.trajectory_2d)
-            n_segments = min(n_pts - 1, 50)
-            step = max(1, (n_pts - 1) // n_segments)
+        # Desenhar o retículo principal (Estilo PSO-1)
+        # 1. Linhas horizontais principais
+        cv2.line(frame, (cx - 150, cy), (cx - 20, cy), cross_color_base, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx + 20, cy), (cx + 150, cy), cross_color_base, 1, cv2.LINE_AA)
+        
+        # 2. Marcações (hash marks) na linha horizontal
+        for i in range(1, 6):
+            cv2.line(frame, (cx - 20 - i*25, cy - 5), (cx - 20 - i*25, cy + 5), cross_color_base, 1, cv2.LINE_AA)
+            cv2.line(frame, (cx + 20 + i*25, cy - 5), (cx + 20 + i*25, cy + 5), cross_color_base, 1, cv2.LINE_AA)
 
-            for i in range(0, n_pts - 1, step):
-                j = min(i + step, n_pts - 1)
-                progress = i / max(n_pts - 1, 1)
+        # 3. Chevron central principal (Centro da mira - 0m) -> Destaque em Vermelho
+        cv2.polylines(frame, [np.array([(cx - 8, cy + 8), (cx, cy), (cx + 8, cy + 8)])], isClosed=False, color=zero_color, thickness=2, lineType=cv2.LINE_AA)
+        cv2.line(frame, (cx, cy + 12), (cx, cy + 30), zero_color, 2, cv2.LINE_AA)
 
-                if progress < 0.5:
-                    t_color = progress * 2.0
-                    b, g, r = 0, int(255 * (1.0 - t_color * 0.3)), int(255 * t_color)
-                else:
-                    t_color = (progress - 0.5) * 2.0
-                    b, g, r = 0, int(255 * (0.7 - t_color * 0.7)), int(255 * (1.0 - t_color * 0.3) + 80 * t_color)
-
-                color = (b, g, min(r, 255))
-                seg_pts = self.trajectory_2d[i:j+1]
-                if len(seg_pts) >= 2:
-                    cv2.polylines(frame, [seg_pts], isClosed=False, color=color, thickness=2, lineType=cv2.LINE_AA)
-
-            last_pt = tuple(self.trajectory_2d[-1, 0])
-            if 0 <= last_pt[0] < w and 0 <= last_pt[1] < h:
-                cv2.drawMarker(frame, last_pt, color=(0, 0, 255), markerType=cv2.MARKER_TILTED_CROSS, markerSize=12, thickness=2, line_type=cv2.LINE_AA)
-
-            first_pt = tuple(self.trajectory_2d[0, 0])
-            if 0 <= first_pt[0] < w and 0 <= first_pt[1] < h:
-                cv2.circle(frame, first_pt, 5, (0, 255, 0), -1, cv2.LINE_AA)
-
-        for pt_2d, label in reversed(self.distance_markers):
+        # 4. Desenhar as distâncias da trajetória balística com cores e tamanhos dinâmicos
+        for pt_2d, label in self.distance_markers:
             px, py = int(pt_2d[0]), int(pt_2d[1])
+            
+            # Extrair apenas o número da string (ex: "10m" -> 10)
+            try:
+                dist_val = int(label.replace('m', ''))
+            except:
+                dist_val = 0
+
+            # Definir a cor (BGR) e o tamanho da fonte baseados na distância
+            
+            if dist_val <= 1:
+                marker_color = (0, 0, 255)   # Azul
+                font_scale = 0.55          # Fonte maior            
+            elif dist_val <= 10:
+                marker_color = (0, 255, 0)   # Azul
+                font_scale = 0.25          # Fonte maior
+            elif dist_val == 20:
+                marker_color = (0, 0, 255) # Amarelo
+                font_scale = 0.55          # Fonte maior
+            elif dist_val == 30:
+                marker_color = (0, 255, 0)   # Verde
+                font_scale = 0.25          # Fonte maior
+            elif dist_val == 40:
+                marker_color = (255, 100, 0) # Azul
+                font_scale = 0.25          # Fonte menor
+            else:
+                marker_color = (255, 100, 0) # Azul (50m para cima)
+                font_scale = 0.25          # Fonte menor
+
             if 0 <= px < w and 0 <= py < h:
-                cv2.line(frame, (px, py - 6), (px, py + 6), (255, 255, 255), 1, cv2.LINE_AA)
-                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-                cv2.rectangle(frame, (px - 2, py - th - 12), (px + tw + 2, py - 8), (0, 0, 255), 1)
-                cv2.putText(frame, label, (px, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+                chev_size = 6 # Tamanho do chevron
+                pt1 = (px - chev_size, py + chev_size)
+                pt2 = (px, py)
+                pt3 = (px + chev_size, py + chev_size)
+                
+                # Desenha o chevron com espessura 2 para destacar mais na tela
+                cv2.polylines(frame, [np.array([pt1, pt2, pt3])], isClosed=False, color=marker_color, thickness=1, lineType=cv2.LINE_AA)
+                
+                # Calcula o tamanho do texto baseado na font_scale dinâmica
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+                
+                text_x = px - tw // 2  # Centraliza no eixo X
+                text_y = py + chev_size + th + 4  # Desce no eixo Y (abaixo do chevron)
+                
+                # Renderiza o texto
+                cv2.putText(frame, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, marker_color, 1, cv2.LINE_AA)
 
-        cx, cy = w // 2, h // 2
-        cross_size = 5
-        cross_gap = 3
-        cross_color = (0, 255, 0)
-        cv2.line(frame, (cx - cross_size, cy), (cx - cross_gap, cy), cross_color, 1, cv2.LINE_AA)
-        cv2.line(frame, (cx + cross_gap, cy), (cx + cross_size, cy), cross_color, 1, cv2.LINE_AA)
-        cv2.line(frame, (cx, cy - cross_size), (cx, cy - cross_gap), cross_color, 1, cv2.LINE_AA)
-        cv2.line(frame, (cx, cy + cross_gap), (cx, cy + cross_size), cross_color, 1, cv2.LINE_AA)
-        cv2.circle(frame, (cx, cy), 1, cross_color, -1, cv2.LINE_AA)
-
+        # Dados balísticos (HUD Superior Esquerdo)
         hud_color = (200, 200, 200)
         hud_bg = (20, 20, 20)
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -303,7 +350,6 @@ class AirTrajAR:
 
         cap.release()
         cv2.destroyAllWindows()
-        # Fecha a instância do detector de rostos corretamente
         self.face_detector.close()
 
 if __name__ == "__main__":
@@ -312,7 +358,7 @@ if __name__ == "__main__":
         frame_height=480,
         v0=110.0,              
         elevation_deg=0.0,     
-        mass_g=0.25,           
+        mass_g=0.20,           
         hop_up=0.35,           
         gravity=9.81,
         wind_lateral_ms=0.0,   
