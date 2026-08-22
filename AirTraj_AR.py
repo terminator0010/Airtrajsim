@@ -354,8 +354,8 @@ class AirTrajAR:
 
 if __name__ == "__main__":
     ar = AirTrajAR(
-        frame_width=640,
-        frame_height=480,
+        frame_width=800,
+        frame_height=600,
         v0=110.0,              
         elevation_deg=0.0,     
         mass_g=0.20,           
